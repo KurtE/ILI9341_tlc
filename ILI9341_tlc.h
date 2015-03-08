@@ -101,7 +101,7 @@
 class ILI9341_TLC : public Print
 {
   public:
-	ILI9341_TLC(uint8_t _CS, uint8_t _DC, uint8_t _RST = 255);
+	ILI9341_TLC(uint8_t cs, uint8_t dc, uint8_t rst = 255, uint8_t mosi=11, uint8_t sclk=13, uint8_t miso=12);
 	void begin(void);
 	void pushColor(uint16_t color);
 	void fillScreen(uint16_t color);
@@ -164,6 +164,7 @@ class ILI9341_TLC : public Print
   private:
   	uint8_t  _rst;
   	uint8_t _cs, _dc;
+    uint8_t _miso, _mosi, _sclk;
 	uint8_t pcs_data, pcs_command;
     
     volatile uint8_t *dcportSet, *dcportClear, *csportSet, *csportClear;
