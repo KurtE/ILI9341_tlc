@@ -19,9 +19,6 @@
 #include "ILI9341_tlc.h"
 #include <SPI.h>
 
-// Teensy 3.1 can only generate 30 MHz SPI when running at 120 MHz (overclock)
-// At all other speeds, SPI.beginTransaction() will use the fastest available clock
-#define SPICLOCK 30000000
 
 #define WIDTH  ILI9341_TFTWIDTH
 #define HEIGHT ILI9341_TFTHEIGHT
@@ -37,7 +34,7 @@ ILI9341_TLC::ILI9341_TLC(uint8_t cs, uint8_t dc, uint8_t rst, uint8_t mosi, uint
     _mosi = mosi;
     _sclk = sclk;
     _miso = miso;
-    
+    _fSPI1 = 0;
 	_width    = WIDTH;
 	_height   = HEIGHT;
 	rotation  = 0;
@@ -49,28 +46,28 @@ ILI9341_TLC::ILI9341_TLC(uint8_t cs, uint8_t dc, uint8_t rst, uint8_t mosi, uint
 
 void ILI9341_TLC::setAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 {
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	setAddr(x0, y0, x1, y1);
 	writecommand_last(ILI9341_RAMWR); // write to RAM
-	SPI.endTransaction();
+	spiEnd();
 }
 
 void ILI9341_TLC::pushColor(uint16_t color)
 {
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	writedata16_last(color);
-	SPI.endTransaction();
+	spiEnd();
 }
 
 void ILI9341_TLC::drawPixel(int16_t x, int16_t y, uint16_t color) {
 
 	if((x < 0) ||(x >= _width) || (y < 0) || (y >= _height)) return;
 
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	setAddr(x, y, x, y);
 	writecommand_cont(ILI9341_RAMWR);
 	writedata16_last(color);
-	SPI.endTransaction();
+	spiEnd();
 }
 
 void ILI9341_TLC::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color)
@@ -78,14 +75,14 @@ void ILI9341_TLC::drawFastVLine(int16_t x, int16_t y, int16_t h, uint16_t color)
 	// Rudimentary clipping
 	if((x >= _width) || (y >= _height)) return;
 	if((y+h-1) >= _height) h = _height-y;
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	setAddr(x, y, x, y+h-1);
 	writecommand_cont(ILI9341_RAMWR);
 	while (h-- > 1) {
 		writedata16_cont(color);
 	}
 	writedata16_last(color);
-	SPI.endTransaction();
+	spiEnd();
 }
 
 void ILI9341_TLC::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color)
@@ -93,14 +90,14 @@ void ILI9341_TLC::drawFastHLine(int16_t x, int16_t y, int16_t w, uint16_t color)
 	// Rudimentary clipping
 	if((x >= _width) || (y >= _height)) return;
 	if((x+w-1) >= _width)  w = _width-x;
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	setAddr(x, y, x+w-1, y);
 	writecommand_cont(ILI9341_RAMWR);
 	while (w-- > 1) {
 		writedata16_cont(color);
 	}
 	writedata16_last(color);
-	SPI.endTransaction();
+	spiEnd();
 }
 
 void ILI9341_TLC::fillScreen(uint16_t color)
@@ -119,7 +116,7 @@ void ILI9341_TLC::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
 	// TODO: this can result in a very long transaction time
 	// should break this into multiple transactions, even though
 	// it'll cost more overhead, so we don't stall other SPI libs
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	setAddr(x, y, x+w-1, y+h-1);
 	writecommand_cont(ILI9341_RAMWR);
 	for(y=h; y>0; y--) {
@@ -128,7 +125,7 @@ void ILI9341_TLC::fillRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
 		}
 		writedata16_last(color);
 	}
-	SPI.endTransaction();
+	spiEnd();
 }
 
 
@@ -214,7 +211,7 @@ uint8_t ILI9341_TLC::readcommand8(uint8_t c, uint8_t index)
     uint16_t wTimeout = 0xffff;
     uint8_t r=0;
 
-    SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+    spiBegin();
     while (((SPI0.SR) & (15 << 12)) && (--wTimeout)) ; // wait until empty
     
     // Make sure the last frame has been sent...
@@ -258,7 +255,7 @@ uint8_t ILI9341_TLC::readcommand8(uint8_t c, uint8_t index)
     while ((((SPI0.SR) >> 4) & 0xf) && (--wTimeout))  {
         r = SPI0.POPR;
     }
-    SPI.endTransaction();
+    spiEnd();
     return r;  // get the received byte... should check for it first...
 #else
     return -1;
@@ -272,7 +269,7 @@ uint16_t ILI9341_TLC::readPixel(int16_t x, int16_t y)
 #ifdef LATER
 	uint8_t dummy,r,g,b;
 
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 
 	setAddr(x, y, x, y);
 	writecommand_cont(ILI9341_RAMRD); // read from RAM
@@ -296,7 +293,7 @@ uint16_t ILI9341_TLC::readPixel(int16_t x, int16_t y)
 	g = SPI0.POPR;		// Read a GREEN byte of GRAM
 	b = SPI0.POPR;		// Read a BLUE byte of GRAM
 
-	SPI.endTransaction();
+	spiEnd();
 	return color565(r,g,b);
 #else
     return -1;    
@@ -310,7 +307,7 @@ void ILI9341_TLC::readRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
 	uint8_t dummy,r,g,b;
     uint16_t c = w * h;
     uint8_t fFirst = 1;
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 
 	setAddr(x, y, x+w-1, y+h-1);
 	writecommand_cont(ILI9341_RAMRD); // read from RAM
@@ -345,14 +342,14 @@ void ILI9341_TLC::readRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
 		while ((SPI0.SR & (15 << 12)) > (3 << 12)) ;
     }
 
-	SPI.endTransaction();
+	spiEnd();
 #endif
 }
 
 // Now lets see if we can writemultiple pixels
 void ILI9341_TLC::writeRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t *pcolors) 
 {
-   	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+   	spiBegin();
 	setAddr(x, y, x+w-1, y+h-1);
 	writecommand_cont(ILI9341_RAMWR);
 	for(y=h; y>0; y--) {
@@ -361,7 +358,7 @@ void ILI9341_TLC::writeRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t
 		}
 		writedata16_last(*pcolors++);
 	}
-	SPI.endTransaction();
+	spiEnd();
 }
 
 
@@ -394,11 +391,19 @@ static const uint8_t init_commands[] = {
 void ILI9341_TLC::begin(void)
 {
     // verify SPI pins are valid;
+    // SPI0 ...
     if ((_mosi == 11 || _mosi == 7) && (_miso == 12 || _miso == 8) && (_sclk == 13 || _sclk == 14)) {
         SPI.setMOSI(_mosi);
         SPI.setMISO(_miso);
         SPI.setSCK(_sclk);
-	} else
+        _pKSPI = &KINETISL_SPI0;
+    } else if ((_mosi == 21 || _mosi == 0) && (_miso == 1 || _miso ==5) && (_sclk == 20)) {
+        SPI1.setMOSI(_mosi);
+        SPI1.setMISO(_miso);
+        SPI1.setSCK(_sclk);
+        _fSPI1 = 1;
+        _pKSPI = &KINETISL_SPI1;
+	} else 
         return; // not valid pins...
 
     // Need to setup DC and RC pins...
@@ -418,7 +423,10 @@ void ILI9341_TLC::begin(void)
     fByteOutput = 0;
 
     // Currently only supporting primary pins...
-	SPI.begin();
+    if (_fSPI1)
+        SPI1.begin();
+    else    
+        SPI.begin();
 	// toggle RST low to reset
 	if (_rst < 255) {
 		pinMode(_rst, OUTPUT);
@@ -441,7 +449,7 @@ void ILI9341_TLC::begin(void)
 	x = readcommand8(ILI9341_RDSELFDIAG);
 	Serial.print("\nSelf Diagnostic: 0x"); Serial.println(x, HEX);
 	*/
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	const uint8_t *addr = init_commands;
 	while (1) {
 		uint8_t count = *addr++;
@@ -452,12 +460,12 @@ void ILI9341_TLC::begin(void)
 		}
 	}
 	writecommand_last(ILI9341_SLPOUT);    // Exit Sleep
-	SPI.endTransaction();
+	spiEnd();
 
 	delay(120); 		
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	writecommand_last(ILI9341_DISPON);    // Display on
-	SPI.endTransaction();
+	spiEnd();
 }
 
 
@@ -652,7 +660,7 @@ void ILI9341_TLC::drawLine(int16_t x0, int16_t y0,
 		ystep = -1;
 	}
 
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	int16_t xbegin = x0;
 	if (steep) {
 		for (; x0<=x1; x0++) {
@@ -693,19 +701,19 @@ void ILI9341_TLC::drawLine(int16_t x0, int16_t y0,
 		}
 	}
 	writecommand_last(ILI9341_NOP);
-	SPI.endTransaction();
+	spiEnd();
 }
 
 // Draw a rectangle
 void ILI9341_TLC::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t color)
 {
-	SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+	spiBegin();
 	HLine(x, y, w, color);
 	HLine(x, y+h-1, w, color);
 	VLine(x, y, h, color);
 	VLine(x+w-1, y, h, color);
 	writecommand_last(ILI9341_NOP);
-	SPI.endTransaction();
+	spiEnd();
 }
 
 // Draw a rounded rectangle
@@ -947,7 +955,7 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 		}
 	} else {
 		// This solid background approach is about 5 time faster
-		SPI.beginTransaction(SPISettings(SPICLOCK, MSBFIRST, SPI_MODE0));
+		spiBegin();
 		setAddr(x, y, x + 6 * size - 1, y + 8 * size - 1);
 		writecommand_cont(ILI9341_RAMWR);
 		uint8_t xr, yr;
@@ -972,7 +980,7 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 			mask = mask << 1;
 		}
 		writecommand_last(ILI9341_NOP);
-		SPI.endTransaction();
+		spiEnd();
 	}
 }
 

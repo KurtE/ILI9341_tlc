@@ -98,10 +98,14 @@
 #define KSPI0 KINETISL_SPI0
 #endif
 
+// Teensy 3.1 can only generate 30 MHz SPI when running at 120 MHz (overclock)
+// At all other speeds, SPI.beginTransaction() will use the fastest available clock
+#define ILI9341_SPICLOCK 30000000
+
 class ILI9341_TLC : public Print
 {
   public:
-	ILI9341_TLC(uint8_t cs, uint8_t dc, uint8_t rst = 255, uint8_t mosi=11, uint8_t sclk=13, uint8_t miso=12);
+	ILI9341_TLC(uint8_t _CS, uint8_t _DC, uint8_t _RST = 255, uint8_t _MOSI=11, uint8_t _SCLK=13, uint8_t _MISO=12);
 	void begin(void);
 	void pushColor(uint16_t color);
 	void fillScreen(uint16_t color);
@@ -165,13 +169,27 @@ class ILI9341_TLC : public Print
   	uint8_t  _rst;
   	uint8_t _cs, _dc;
     uint8_t _miso, _mosi, _sclk;
+    uint8_t _fSPI1;
 	uint8_t pcs_data, pcs_command;
+    KINETISL_SPI_t *_pKSPI;
     
     volatile uint8_t *dcportSet, *dcportClear, *csportSet, *csportClear;
     uint8_t  cspinmask, dcpinmask;
     uint8_t  fDCHigh, fCSHigh, fByteOutput;
 
-
+    void spiBegin(void)  __attribute__((always_inline)) {
+        if (_fSPI1)
+            SPI1.beginTransaction(SPISettings(ILI9341_SPICLOCK, MSBFIRST, SPI_MODE0));
+        else
+            SPI.beginTransaction(SPISettings(ILI9341_SPICLOCK, MSBFIRST, SPI_MODE0));
+    }
+    void spiEnd(void)  __attribute__((always_inline)) {
+        if (_fSPI1)
+            SPI1.endTransaction();
+        else
+            SPI.endTransaction();
+    }
+    
 	void setAddr(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 	  __attribute__((always_inline)) {
 		writecommand_cont(ILI9341_CASET); // Column addr set
@@ -185,11 +203,11 @@ class ILI9341_TLC : public Print
     void writeSPIByte(uint8_t val) {
         uint32_t sr;
         do {
-            sr = SPI0_S;
-    		if ((SPI0_S & SPI_S_SPRF)) 
-                uint32_t tmp __attribute__((unused)) = SPI0_DL;
+            sr = _pKSPI->S;
+    		if ((_pKSPI->S & SPI_S_SPRF)) 
+                uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
 		} while (!(sr & SPI_S_SPTEF)) ; // room for byte to output.
-		SPI0_DL = val;
+		_pKSPI->DL = val;
         fByteOutput = 1;
     }
     
@@ -197,16 +215,16 @@ class ILI9341_TLC : public Print
         if (fByteOutput) {
             fByteOutput = 0;    // Don't do twice...
             uint32_t sr;
-            if (!(SPI0_S & SPI_S_SPTEF))  {    // still something to output
+            if (!(_pKSPI->S & SPI_S_SPTEF))  {    // still something to output
                 do {
-                    sr = SPI0_S;
-                    if ((SPI0_S & SPI_S_SPRF)) 
-                        uint32_t tmp __attribute__((unused)) = SPI0_DL;
+                    sr = _pKSPI->S;
+                    if ((_pKSPI->S & SPI_S_SPRF)) 
+                        uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
                 } while (!(sr & SPI_S_SPTEF)) ; // room for byte to output.
             } else { 
                 uint16_t wDontHang = 20;     // loop through a wait for byte to be ready...
-                while (!(SPI0_S & SPI_S_SPRF) && wDontHang--) ;   // wait for read data to come back...
-                uint32_t tmp __attribute__((unused)) = SPI0_DL;
+                while (!(_pKSPI->S & SPI_S_SPRF) && wDontHang--) ;   // wait for read data to come back...
+                uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
             }    
         }
 	}
