@@ -141,6 +141,7 @@ class ILI9341_TLC : public Print
 	void drawBitmap(int16_t x, int16_t y, const uint8_t *bitmap, int16_t w, int16_t h, uint16_t color);
 	void drawChar(int16_t x, int16_t y, unsigned char c, uint16_t color, uint16_t bg, uint8_t size);
 	void setCursor(int16_t x, int16_t y);
+    void getCursor(int16_t *x, int16_t *y);
 	void setTextColor(uint16_t c);
 	void setTextColor(uint16_t c, uint16_t bg);
 	void setTextSize(uint8_t s);
@@ -210,6 +211,20 @@ class ILI9341_TLC : public Print
 		_pKSPI->DL = val;
         fByteOutput = 1;
     }
+
+    uint8_t transferSPIByte(uint8_t val) {
+        uint32_t sr;
+        do {
+            sr = _pKSPI->S;
+    		if ((_pKSPI->S & SPI_S_SPRF)) 
+                uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
+		} while (!(sr & SPI_S_SPTEF)) ; // room for byte to output.
+		_pKSPI->DL = val;
+
+    	while (!(_pKSPI->S & SPI_S_SPRF)) ; // wait until we have a character available to output. 
+        fByteOutput = 0;     // we are not waiting for any output to change...
+        return _pKSPI->DL;   // get the byte... 
+    }
     
 	void waitTransmitComplete(void) {
         if (fByteOutput) {
@@ -271,6 +286,13 @@ class ILI9341_TLC : public Print
         csLow();
         writeSPIByte(c);
 	}
+
+    uint8_t transferdata8_cont(uint8_t c) {
+        dcHigh();
+        csLow();
+        uint8_t r = transferSPIByte(c);
+        return r; 
+    }
 	void writedata16_cont(uint16_t d) __attribute__((always_inline)) {
         dcHigh();
         csLow();
@@ -289,6 +311,14 @@ class ILI9341_TLC : public Print
         writeSPIByte(c);
         csHigh();
 	}
+    uint8_t transferdata8_last(uint8_t c) {
+        dcHigh();
+        csLow();
+        uint8_t r = transferSPIByte(c);
+        csHigh();
+        return r; 
+    }
+
 	void writedata16_last(uint16_t d) __attribute__((always_inline)) {
         dcHigh();
         csLow();

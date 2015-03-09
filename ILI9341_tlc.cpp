@@ -207,143 +207,62 @@ uint8_t ILI9341_TLC::readdata(void)
 
 uint8_t ILI9341_TLC::readcommand8(uint8_t c, uint8_t index)
 {
-#ifdef LATER
-    uint16_t wTimeout = 0xffff;
     uint8_t r=0;
 
     spiBegin();
-    while (((SPI0.SR) & (15 << 12)) && (--wTimeout)) ; // wait until empty
     
-    // Make sure the last frame has been sent...
-    SPI0.SR = SPI_SR_TCF;   // dlear it out;
-    wTimeout = 0xffff;
-    while (!((SPI0.SR) & SPI_SR_TCF) && (--wTimeout)) ; // wait until it says the last frame completed
-
-    // clear out any current received bytes
-    wTimeout = 0x10;    // should not go more than 4...
-    while ((((SPI0.SR) >> 4) & 0xf) && (--wTimeout))  {
-        r = SPI0.POPR;
-    }
-    
-    //writecommand(0xD9); // sekret command
-	SPI0.PUSHR = 0xD9 | (pcs_command << 16) | SPI_PUSHR_CTAS(0) | SPI_PUSHR_CONT;
-//	while (((SPI0.SR) & (15 << 12)) > (3 << 12)) ; // wait if FIFO full
-
-    // writedata(0x10 + index);
-	SPI0.PUSHR = (0x10 + index) | (pcs_data << 16) | SPI_PUSHR_CTAS(0);
-//	while (((SPI0.SR) & (15 << 12)) > (3 << 12)) ; // wait if FIFO full
-
-    // writecommand(c);
-   	SPI0.PUSHR = c | (pcs_command << 16) | SPI_PUSHR_CTAS(0) | SPI_PUSHR_CONT;
-//	while (((SPI0.SR) & (15 << 12)) > (3 << 12)) ; // wait if FIFO full
-
-    // readdata
-	SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0);
-//	while (((SPI0.SR) & (15 << 12)) > (3 << 12)) ; // wait if FIFO full
-        
-    // Now wait until completed. 
-    wTimeout = 0xffff;
-    while (((SPI0.SR) & (15 << 12)) && (--wTimeout)) ; // wait until empty
-
-    // Make sure the last frame has been sent...
-    SPI0.SR = SPI_SR_TCF;   // dlear it out;
-    wTimeout = 0xffff;
-    while (!((SPI0.SR) & SPI_SR_TCF) && (--wTimeout)) ; // wait until it says the last frame completed
-
-    wTimeout = 0x10;    // should not go more than 4...
-    // lets get all of the values on the FIFO
-    while ((((SPI0.SR) >> 4) & 0xf) && (--wTimeout))  {
-        r = SPI0.POPR;
-    }
+    writecommand_cont(0xD9); // sekret command
+    writedata8_cont(0x10 + index);
+    writecommand_cont(c);
+    r = transferdata8_last(0);
     spiEnd();
     return r;  // get the received byte... should check for it first...
-#else
-    return -1;
-#endif
 }
 
 
 // Read Pixel at x,y and get back 16-bit packed color
 uint16_t ILI9341_TLC::readPixel(int16_t x, int16_t y)
 {
-#ifdef LATER
-	uint8_t dummy,r,g,b;
+	uint8_t r,g,b;
 
 	spiBegin();
 
 	setAddr(x, y, x, y);
 	writecommand_cont(ILI9341_RAMRD); // read from RAM
-	waitTransmitComplete();
-
-	// Push 4 bytes over SPI
-	SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0)| SPI_PUSHR_CONT;
-    waitFifoEmpty();    // wait for both queues to be empty.
-
-	SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0)| SPI_PUSHR_CONT;
-	SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0)| SPI_PUSHR_CONT;
-	SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0)| SPI_PUSHR_EOQ;
-
-	// Wait for End of Queue
-	while ((SPI0.SR & SPI_SR_EOQF) == 0) ;
-	SPI0.SR = SPI_SR_EOQF;  // make sure it is clear
 
 	// Read Pixel Data
-	dummy = SPI0.POPR;	// Read a DUMMY byte of GRAM
-	r = SPI0.POPR;		// Read a RED byte of GRAM
-	g = SPI0.POPR;		// Read a GREEN byte of GRAM
-	b = SPI0.POPR;		// Read a BLUE byte of GRAM
+	r = transferdata8_cont(0);	// Read a DUMMY byte of GRAM
+	r = transferdata8_cont(0);		// Read a RED byte of GRAM
+	g = transferdata8_cont(0);		// Read a GREEN byte of GRAM
+	b = transferdata8_last(0);		// Read a BLUE byte of GRAM
 
 	spiEnd();
 	return color565(r,g,b);
-#else
-    return -1;    
-#endif
 }
 
 // Now lets see if we can read in multiple pixels
 void ILI9341_TLC::readRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t *pcolors) 
 {
-#ifdef LATER
-	uint8_t dummy,r,g,b;
+    // First quick and dirty version. 
+	uint8_t r,g,b;
     uint16_t c = w * h;
-    uint8_t fFirst = 1;
 	spiBegin();
 
 	setAddr(x, y, x+w-1, y+h-1);
 	writecommand_cont(ILI9341_RAMRD); // read from RAM
-	waitTransmitComplete();
-	SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0)| SPI_PUSHR_CONT | SPI_PUSHR_EOQ;
-    while ((SPI0.SR & SPI_SR_EOQF) == 0) ;
-    SPI0.SR = SPI_SR_EOQF;  // make sure it is clear
-    while ((SPI0.SR & 0xf0)) { 
-        dummy = SPI0.POPR;	// Read a DUMMY byte but only once
-    }
-    c *= 3; // number of bytes we will transmit to the display
+	r = transferdata8_cont(0);	// Read a DUMMY byte of GRAM
+
     while (c--) {
+        r = transferdata8_cont(0);		// Read a RED byte of GRAM
+        g = transferdata8_cont(0);		// Read a GREEN byte of GRAM
         if (c)
-            SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0)| SPI_PUSHR_CONT;
-        else    
-            SPI0.PUSHR = 0 | (pcs_data << 16) | SPI_PUSHR_CTAS(0)| SPI_PUSHR_EOQ;
-
-        // If last byte wait until all have come in...
-        if (c == 0) {
-            while ((SPI0.SR & SPI_SR_EOQF) == 0) ;
-            SPI0.SR = SPI_SR_EOQF;  // make sure it is clear
-        }
-
-    if ((SPI0.SR & 0xf0) >= 0x30) { // do we have at least 3 bytes in queue if so extract...
-            r = SPI0.POPR;		// Read a RED byte of GRAM
-            g = SPI0.POPR;		// Read a GREEN byte of GRAM
-            b = SPI0.POPR;		// Read a BLUE byte of GRAM
-           *pcolors++ = color565(r,g,b);
-        }
-        
-        // like waitFiroNotFull but does not pop our return queue
-		while ((SPI0.SR & (15 << 12)) > (3 << 12)) ;
+            b = transferdata8_cont(0);		// Read a BLUE byte of GRAM
+        else
+            b = transferdata8_last(0);		// Read a BLUE byte of GRAM
+        *pcolors++ = color565(r,g,b);
     }
 
 	spiEnd();
-#endif
 }
 
 // Now lets see if we can writemultiple pixels
@@ -987,6 +906,11 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 void ILI9341_TLC::setCursor(int16_t x, int16_t y) {
   cursor_x = x;
   cursor_y = y;
+}
+
+void ILI9341_TLC::getCursor(int16_t *x, int16_t *y) {
+  *x = cursor_x;
+  *y = cursor_y;
 }
 
 void ILI9341_TLC::setTextSize(uint8_t s) {
