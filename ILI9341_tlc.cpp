@@ -244,23 +244,38 @@ uint16_t ILI9341_TLC::readPixel(int16_t x, int16_t y)
 void ILI9341_TLC::readRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t *pcolors) 
 {
     // First quick and dirty version. 
-	uint8_t r,g,b;
+	uint8_t ab[4];      // buffer to read in colors for one pixel.
+    int8_t ib;         // index into the buffer; 
     uint16_t c = w * h;
 	spiBegin();
 
 	setAddr(x, y, x+w-1, y+h-1);
-	writecommand_cont(ILI9341_RAMRD); // read from RAM
-	r = transferdata8_cont(0);	// Read a DUMMY byte of GRAM
+   	writecommand_cont(ILI9341_RAMRD); // read from RAM
+    dcHigh();
+    // We will need to transfer c*3+1 bytes
+    uint16_t cRead = c*3+1;   // see how many bytes we need to write
+    ib = 0;    // we will ignore first N bytes returned. 
+    while (cRead) {
+        // Wait for input queue to have room
+        while (!(_pKSPI->S & SPI_S_SPTEF)) ;
+        _pKSPI->DL = 0;     // push a 0 to start next transfer
+        if (ib == 4) {
+            // we have a pixel so lets build it 
+            // Sort of hack, try to build pixel while next byte is being output as to 
+            // better maximize the use of the SPI buss
+            *pcolors++ = color565(ab[1], ab[2], ab[3]);
+            ib = 1;
+        }
+ 
+       // Now wait until byte has been output
+        while (!(_pKSPI->S & SPI_S_SPRF)) ;
+        ab[ib++] = _pKSPI->DL; // read in the byte;
+        cRead--;
+    }  
+    // But that implies that we then need to generate the last pixel outside of the loop.
+    *pcolors = color565(ab[1], ab[2], ab[3]);
 
-    while (c--) {
-        r = transferdata8_cont(0);		// Read a RED byte of GRAM
-        g = transferdata8_cont(0);		// Read a GREEN byte of GRAM
-        if (c)
-            b = transferdata8_cont(0);		// Read a BLUE byte of GRAM
-        else
-            b = transferdata8_last(0);		// Read a BLUE byte of GRAM
-        *pcolors++ = color565(r,g,b);
-    }
+    csHigh();
 
 	spiEnd();
 }
