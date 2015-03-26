@@ -100,7 +100,7 @@
 
 // Teensy 3.1 can only generate 30 MHz SPI when running at 120 MHz (overclock)
 // At all other speeds, SPI.beginTransaction() will use the fastest available clock
-#define ILI9341_SPICLOCK 12000000
+#define ILI9341_SPICLOCK 30000000
 
 class ILI9341_TLC : public Print
 {
@@ -172,11 +172,12 @@ class ILI9341_TLC : public Print
     uint8_t _miso, _mosi, _sclk;
     uint8_t _fSPI1;
 	uint8_t pcs_data, pcs_command;
+	int8_t _cWritesPending;
     KINETISL_SPI_t *_pKSPI;
     
     volatile uint8_t *dcportSet, *dcportClear, *csportSet, *csportClear;
     uint8_t  cspinmask, dcpinmask;
-    uint8_t  fDCHigh, fCSHigh, fByteOutput;
+    uint8_t  fDCHigh, fCSHigh;
 
     void spiBegin(void)  __attribute__((always_inline)) {
         if (_fSPI1)
@@ -194,56 +195,90 @@ class ILI9341_TLC : public Print
 	void setAddr(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 	  __attribute__((always_inline)) {
 		writecommand_cont(ILI9341_CASET); // Column addr set
-		writedata16_cont(x0);   // XSTART
-		writedata16_cont(x1);   // XEND
+		set16BitWrite();
+		writedata16(x0);   // XSTART
+		writedata16(x1);   // XEND
+		set8BitWrite();
 		writecommand_cont(ILI9341_PASET); // Row addr set
-		writedata16_cont(y0);   // YSTART
-		writedata16_cont(y1);   // YEND
+		set16BitWrite();
+		writedata16(y0);   // YSTART
+		writedata16(y1);   // YEND
+		set8BitWrite();
 	}
     //void writeSPIByte(uint8_t c)  __attribute__((always_inline)) {
-    void writeSPIByte(uint8_t val) {
-        uint32_t sr;
-        do {
-            sr = _pKSPI->S;
-    		if ((_pKSPI->S & SPI_S_SPRF)) 
-                uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
-		} while (!(sr & SPI_S_SPTEF)) ; // room for byte to output.
-		_pKSPI->DL = val;
-        fByteOutput = 1;
-    }
+	void writeSPIByte(uint8_t val) {
+		if (_fSPI1) {
+			do {
+				if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+					uint8_t tmp __attribute__((unused)) = SPI1_DL;
+					if (_cWritesPending)
+						_cWritesPending--;
+				}
+			} while ((SPI1_S & SPI_S_TXFULLF)); // Fifo  full
+			SPI1_DL = val;
+			_cWritesPending++;
+		}
+		else {
+			uint32_t sr;
+			do {
+				sr = _pKSPI->S;
+				if ((sr & SPI_S_SPRF)) {
+					uint8_t tmp __attribute__((unused)) = _pKSPI->DL;
+					_cWritesPending--;
+				}
+			} while (!(sr & SPI_S_SPTEF)); // room for byte to output.
+			_pKSPI->DL = val;
+			_cWritesPending++;
+	}
+}
 
-    uint8_t transferSPIByte(uint8_t val) {
-        uint32_t sr;
-        do {
-            sr = _pKSPI->S;
-    		if ((_pKSPI->S & SPI_S_SPRF)) 
-                uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
-		} while (!(sr & SPI_S_SPTEF)) ; // room for byte to output.
-		_pKSPI->DL = val;
-
-    	while (!(_pKSPI->S & SPI_S_SPRF)) ; // wait until we have a character available to output. 
-        fByteOutput = 0;     // we are not waiting for any output to change...
-        return _pKSPI->DL;   // get the byte... 
-    }
-    
-	void waitTransmitComplete(void) {
-        if (fByteOutput) {
-            fByteOutput = 0;    // Don't do twice...
-            uint32_t sr;
-            if (!(_pKSPI->S & SPI_S_SPTEF))  {    // still something to output
-                do {
-                    sr = _pKSPI->S;
-                    if ((_pKSPI->S & SPI_S_SPRF)) 
-                        uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
-                } while (!(sr & SPI_S_SPTEF)) ; // room for byte to output.
-            } else { 
-                uint16_t wDontHang = 20;     // loop through a wait for byte to be ready...
-                while (!(_pKSPI->S & SPI_S_SPRF) && wDontHang--) ;   // wait for read data to come back...
-                uint32_t tmp __attribute__((unused)) = _pKSPI->DL;
-            }    
-        }
+	uint8_t transferSPIByte(uint8_t val) {
+		if (_fSPI1) {
+			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+				if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+					uint8_t tmp __attribute__((unused)) = SPI1_DL;
+					if (_cWritesPending)
+						_cWritesPending--;
+				}
+			}
+			SPI1_DL = val;	// now output the byte to the queue.
+			while ((SPI1_S & SPI_S_RFIFOEF));	// Wait until we get something.
+			_cWritesPending = 0;
+			return SPI1_DL;
+		}
+		else {
+			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+				if (SPI0_S & SPI_S_SPRF) {	// If receive not empty read one... 
+					uint32_t tmp __attribute__((unused)) = SPI0_DL;
+					_cWritesPending--;
+				}
+			}
+			SPI0_DL = val;	// now output the byte to the queue.
+			while (!(SPI0_S & SPI_S_SPRF));	// Wait until we get something.
+			_cWritesPending = 0;
+			return SPI0_DL;
+		}
 	}
 
+	void waitTransmitComplete(void) {
+		if (_fSPI1) {
+			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+				while (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+					uint8_t tmp __attribute__((unused)) = SPI1_DL;
+					_cWritesPending--;
+				}
+			}
+		}
+		else {
+			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+				if (SPI0_S & SPI_S_SPRF) {	// If receive not empty read one... 
+					uint32_t tmp __attribute__((unused)) = SPI0_DL;
+					_cWritesPending--;
+				}
+			}
+		}
+		_cWritesPending = 0;
+	}
     // For Teensy lets try using set and clear register.
     void dcHigh()  __attribute__((always_inline)) {
         if (!fDCHigh) {
@@ -293,6 +328,75 @@ class ILI9341_TLC : public Print
         uint8_t r = transferSPIByte(c);
         return r; 
     }
+
+	void writeSPIWord(uint16_t val) {
+		if (_fSPI1) {
+			do {
+				if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+					uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
+					tmp = KINETISL_SPI1.DH;
+					if (_cWritesPending)
+						_cWritesPending--;
+				}
+			} while ((SPI1_S & SPI_S_TXFULLF)); // Fifo  full
+			*((uint16_t*)&KINETISL_SPI1.DL) = val;
+			_cWritesPending++;
+		}
+		else {
+			uint32_t sr;
+			do {
+				sr = _pKSPI->S;
+				if ((sr & SPI_S_SPRF)) {
+					uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
+					tmp = KINETISL_SPI1.DH;
+					_cWritesPending--;
+				}
+			} while (!(sr & SPI_S_SPTEF)); // room for byte to output.
+			*((uint16_t*)&KINETISL_SPI0.DL) = val;
+			_cWritesPending++;
+		}
+	}
+
+	void set16BitWrite() __attribute__((always_inline)) {
+		dcHigh();
+		csLow();
+		waitTransmitComplete();
+		_pKSPI->C2 = SPI_C2_SPIMODE;
+//		SPI1_C3 |= SPI_C3_FIFOMODE;
+	}
+
+	void waitTransmitComplete16(void) {
+		// Only do just before we reset back to 8 bit mode, so no need in reading out the stuff...
+		if (_fSPI1) {
+			while (_cWritesPending > 0) {
+				while (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+					uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
+					tmp = KINETISL_SPI1.DH;
+					_cWritesPending--;
+				}
+			}
+		}
+		else {
+			while (_cWritesPending > 0) {
+				if ((SPI0_S & SPI_S_SPRF)) {	// If receive not empty read one... 
+					uint16_t tmp __attribute__((unused)) = *((uint16_t*)&KINETISL_SPI0.DL);
+					_cWritesPending--;
+				}
+			}
+		}
+		_cWritesPending = 0;	// make sure zero... 
+	}
+	void set8BitWrite() __attribute__((always_inline)) {
+		waitTransmitComplete16();
+		_pKSPI->C2 = 0;
+//		SPI1_C3 |= SPI_C3_FIFOMODE;
+	}
+
+
+	void writedata16(uint16_t d) __attribute__((always_inline)) {
+		writeSPIWord(d);
+	}
+
 	void writedata16_cont(uint16_t d) __attribute__((always_inline)) {
         dcHigh();
         csLow();
@@ -330,19 +434,25 @@ class ILI9341_TLC : public Print
 	  __attribute__((always_inline)) {
 		setAddr(x, y, x+w-1, y);
 		writecommand_cont(ILI9341_RAMWR);
-		do { writedata16_cont(color); } while (--w > 0);
+		set16BitWrite();
+		do { writedata16(color); } while (--w > 0);
+		set8BitWrite();
 	}
 	void VLine(int16_t x, int16_t y, int16_t h, uint16_t color)
 	  __attribute__((always_inline)) {
 		setAddr(x, y, x, y+h-1);
 		writecommand_cont(ILI9341_RAMWR);
-		do { writedata16_cont(color); } while (--h > 0);
+		set16BitWrite();
+		do { writedata16(color); } while (--h > 0);
+		set8BitWrite();
 	}
 	void Pixel(int16_t x, int16_t y, uint16_t color)
 	  __attribute__((always_inline)) {
 		setAddr(x, y, x, y);
 		writecommand_cont(ILI9341_RAMWR);
-		writedata16_cont(color);
+		set16BitWrite();
+		writedata16(color);
+		set8BitWrite();
 	}
 };
 
