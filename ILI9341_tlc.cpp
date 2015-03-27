@@ -34,7 +34,6 @@ ILI9341_TLC::ILI9341_TLC(uint8_t cs, uint8_t dc, uint8_t rst, uint8_t mosi, uint
     _mosi = mosi;
     _sclk = sclk;
     _miso = miso;
-    _fSPI1 = 0;
 	_width    = WIDTH;
 	_height   = HEIGHT;
 	rotation  = 0;
@@ -238,39 +237,20 @@ void ILI9341_TLC::readRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
     // We will need to transfer c*3+1 bytes
     uint32_t cRead = c*3+1;   // see how many bytes we need to write
     ib = 0;    // we will ignore first N bytes returned. 
-	if (_fSPI1) {
-		uint32_t cWrite = cRead;
-		while (cRead) {
-			// Wait for input queue to have room
-			if (cWrite) {
-				if (!(SPI1_S & SPI_S_TXFULLF)) {
-					_pKSPI->DL = 0;     // push a 0 to start next transfer
-					cWrite--;
-				}
+#ifdef USE_SPI1
+	uint32_t cWrite = cRead;
+	while (cRead) {
+		// Wait for input queue to have room
+		if (cWrite) {
+			if (!(SPI1_S & SPI_S_TXFULLF)) {
+				SPI1_DL = 0;     // push a 0 to start next transfer
+				cWrite--;
 			}
-
-			if (!(SPI1_S & SPI_S_RFIFOEF)) {
-				ab[ib++] = _pKSPI->DL; // read in the byte;
-				cRead--;
-				if (ib == 4) {
-					// we have a pixel so lets build it 
-					// Sort of hack, try to build pixel while next byte is being output as to 
-					// better maximize the use of the SPI buss
-					*pcolors++ = color565(ab[1], ab[2], ab[3]);
-					ib = 1;
-				}
-			}
-			// Now wait until byte has been output
 		}
-		// But that implies that we then need to generate the last pixel outside of the loop.
-		*pcolors = color565(ab[1], ab[2], ab[3]);
 
-	}
-	else {
-		while (cRead) {
-			// Wait for input queue to have room
-			while (!(_pKSPI->S & SPI_S_SPTEF));
-			_pKSPI->DL = 0;     // push a 0 to start next transfer
+		if (!(SPI1_S & SPI_S_RFIFOEF)) {
+			ab[ib++] = SPI0_DL; // read in the byte;
+			cRead--;
 			if (ib == 4) {
 				// we have a pixel so lets build it 
 				// Sort of hack, try to build pixel while next byte is being output as to 
@@ -278,13 +258,30 @@ void ILI9341_TLC::readRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
 				*pcolors++ = color565(ab[1], ab[2], ab[3]);
 				ib = 1;
 			}
-
-			// Now wait until byte has been output
-			while (!(_pKSPI->S & SPI_S_SPRF));
-			ab[ib++] = _pKSPI->DL; // read in the byte;
-			cRead--;
 		}
+		// Now wait until byte has been output
 	}
+	// But that implies that we then need to generate the last pixel outside of the loop.
+	*pcolors = color565(ab[1], ab[2], ab[3]);
+#else
+	while (cRead) {
+		// Wait for input queue to have room
+		while (!(SPI0_S & SPI_S_SPTEF));
+		SPI0_DL = 0;     // push a 0 to start next transfer
+		if (ib == 4) {
+			// we have a pixel so lets build it 
+			// Sort of hack, try to build pixel while next byte is being output as to 
+			// better maximize the use of the SPI buss
+			*pcolors++ = color565(ab[1], ab[2], ab[3]);
+			ib = 1;
+		}
+
+		// Now wait until byte has been output
+		while (!(SPI0_S & SPI_S_SPRF));
+		ab[ib++] = SPI0_DL; // read in the byte;
+		cRead--;
+	}
+#endif
 	// But that implies that we then need to generate the last pixel outside of the loop.
 	*pcolors = color565(ab[1], ab[2], ab[3]);
     csHigh();
@@ -339,58 +336,7 @@ static const uint8_t init_commands[] = {
 
 void ILI9341_TLC::begin(void)
 {
-    // verify SPI pins are valid;
-    // SPI0 ...
-    if ((_mosi == 11 || _mosi == 7) && (_miso == 12 || _miso == 8) && (_sclk == 13 || _sclk == 14)) {
-        SPI.setMOSI(_mosi);
-        SPI.setMISO(_miso);
-        SPI.setSCK(_sclk);
-        _pKSPI = &KINETISL_SPI0;
-	}
-	else if ((_mosi == 21 || _mosi == 0) && (_miso == 1 || _miso == 5) && (_sclk == 20)) {
-		SPI1.setMOSI(_mosi);
-		SPI1.setMISO(_miso);
-		SPI1.setSCK(_sclk);
-		_fSPI1 = 1;
-		_pKSPI = &KINETISL_SPI1;
-
-	} else 
-        return; // not valid pins...
-
-    // Need to setup DC and RC pins...
-    pinMode(_cs, OUTPUT);
-    digitalWrite(_cs, HIGH);
-    fCSHigh = 1;
-    csportSet    = portSetRegister(digitalPinToPort(_cs));
-    csportClear    = portClearRegister(digitalPinToPort(_cs));
-    cspinmask = digitalPinToBitMask(_cs);
-  
-    pinMode(_dc, OUTPUT);
-    digitalWrite(_dc, HIGH);
-    fDCHigh = 1;
-    dcportSet    = portSetRegister(digitalPinToPort(_dc));
-    dcportClear    = portClearRegister(digitalPinToPort(_dc));
-    dcpinmask = digitalPinToBitMask(_dc);
-    // Currently only supporting primary pins...
-    if (_fSPI1)
-        SPI1.begin();
-    else    
-        SPI.begin();
-	// toggle RST low to reset
-	if (_rst < 255) {
-		pinMode(_rst, OUTPUT);
-		digitalWrite(_rst, HIGH);
-		delay(5);
-		digitalWrite(_rst, LOW);
-		delay(20);
-		digitalWrite(_rst, HIGH);
-		delay(150);
-	}
-	// Try to enable fifo on SPI1
-	if (_fSPI1) {
-		SPI1_C3 |= SPI_C3_FIFOMODE;
-	}
-
+	spiInit();	// put in header file to allow compile option for which SPI buss
 	/*
 	uint8_t x = readcommand8(ILI9341_RDMODE);
 	Serial.print("\nDisplay Power Mode: 0x"); Serial.println(x, HEX);
@@ -793,7 +739,7 @@ void ILI9341_TLC::drawBitmap(int16_t x, int16_t y,
   for(j=0; j<h; j++) {
     for(i=0; i<w; i++ ) {
       if(pgm_read_byte(bitmap + j * byteWidth + i / 8) & (128 >> (i & 7))) {
-	drawPixel(x+i, y+j, color);
+		drawPixel(x+i, y+j, color);
       }
     }
   }

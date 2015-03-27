@@ -15,6 +15,7 @@
   Written by Limor Fried/Ladyada for Adafruit Industries.
   MIT license, all text above must be included in any redistribution
  ****************************************************/
+#define USE_SPI1
 
 #ifndef _ILI9341_TLCH_
 #define _ILI9341_TLCH_
@@ -105,7 +106,11 @@
 class ILI9341_TLC : public Print
 {
   public:
+#ifdef USE_SPI1
+	  ILI9341_TLC(uint8_t _CS, uint8_t _DC, uint8_t _RST = 255, uint8_t _MOSI = 0, uint8_t _SCLK = 20, uint8_t _MISO = 1);
+#else
 	ILI9341_TLC(uint8_t _CS, uint8_t _DC, uint8_t _RST = 255, uint8_t _MOSI=11, uint8_t _SCLK=13, uint8_t _MISO=12);
+#endif
 	void begin(void);
 	void pushColor(uint16_t color);
 	void fillScreen(uint16_t color);
@@ -170,27 +175,84 @@ class ILI9341_TLC : public Print
   	uint8_t  _rst;
   	uint8_t _cs, _dc;
     uint8_t _miso, _mosi, _sclk;
-    uint8_t _fSPI1;
+//    uint8_t _fSPI1;
 	uint8_t pcs_data, pcs_command;
 	int8_t _cWritesPending;
-    KINETISL_SPI_t *_pKSPI;
+    //KINETISL_SPI_t *_pKSPI;
     
     volatile uint8_t *dcportSet, *dcportClear, *csportSet, *csportClear;
     uint8_t  cspinmask, dcpinmask;
     uint8_t  fDCHigh, fCSHigh;
 
-    void spiBegin(void)  __attribute__((always_inline)) {
-        if (_fSPI1)
-            SPI1.beginTransaction(SPISettings(ILI9341_SPICLOCK, MSBFIRST, SPI_MODE0));
-        else
-            SPI.beginTransaction(SPISettings(ILI9341_SPICLOCK, MSBFIRST, SPI_MODE0));
-    }
-    void spiEnd(void)  __attribute__((always_inline)) {
-        if (_fSPI1)
-            SPI1.endTransaction();
-        else
-            SPI.endTransaction();
-    }
+	void spiBegin(void)  __attribute__((always_inline)) {
+#ifdef USE_SPI1
+		SPI1.beginTransaction(SPISettings(ILI9341_SPICLOCK, MSBFIRST, SPI_MODE0));
+#else
+		SPI.beginTransaction(SPISettings(ILI9341_SPICLOCK, MSBFIRST, SPI_MODE0));
+#endif
+	}
+	void spiEnd(void)  __attribute__((always_inline)) {
+#ifdef USE_SPI1
+        SPI1.endTransaction();
+
+#else		
+        SPI.endTransaction();
+#endif
+	}
+	void spiInit(void) {
+		// verify SPI pins are valid;
+		// SPI0 ...
+#ifndef USE_SPI1
+		if ((_mosi == 11 || _mosi == 7) && (_miso == 12 || _miso == 8) && (_sclk == 13 || _sclk == 14)) {
+			SPI.setMOSI(_mosi);
+			SPI.setMISO(_miso);
+			SPI.setSCK(_sclk);
+		}
+#else
+		if ((_mosi == 21 || _mosi == 0) && (_miso == 1 || _miso == 5) && (_sclk == 20)) {
+			SPI1.setMOSI(_mosi);
+			SPI1.setMISO(_miso);
+			SPI1.setSCK(_sclk);
+		}
+#endif
+		else
+			return; // not valid pins...
+
+		// Need to setup DC and RC pins...
+		pinMode(_cs, OUTPUT);
+		digitalWrite(_cs, HIGH);
+		fCSHigh = 1;
+		csportSet = portSetRegister(digitalPinToPort(_cs));
+		csportClear = portClearRegister(digitalPinToPort(_cs));
+		cspinmask = digitalPinToBitMask(_cs);
+
+		pinMode(_dc, OUTPUT);
+		digitalWrite(_dc, HIGH);
+		fDCHigh = 1;
+		dcportSet = portSetRegister(digitalPinToPort(_dc));
+		dcportClear = portClearRegister(digitalPinToPort(_dc));
+		dcpinmask = digitalPinToBitMask(_dc);
+		// Currently only supporting primary pins...
+#ifdef USE_SPI1
+		SPI1.begin();
+#else
+		SPI.begin();
+#endif
+			// toggle RST low to reset
+		if (_rst < 255) {
+			pinMode(_rst, OUTPUT);
+			digitalWrite(_rst, HIGH);
+			delay(5);
+			digitalWrite(_rst, LOW);
+			delay(20);
+			digitalWrite(_rst, HIGH);
+			delay(150);
+		}
+		// Try to enable fifo on SPI1
+#ifdef USE_SPI1
+		SPI1_C3 |= SPI_C3_FIFOMODE;
+#endif
+	}
     
 	void setAddr(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1)
 	  __attribute__((always_inline)) {
@@ -207,79 +269,77 @@ class ILI9341_TLC : public Print
 	}
     //void writeSPIByte(uint8_t c)  __attribute__((always_inline)) {
 	void writeSPIByte(uint8_t val) {
-		if (_fSPI1) {
-			do {
-				if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
-					uint8_t tmp __attribute__((unused)) = SPI1_DL;
-					if (_cWritesPending)
-						_cWritesPending--;
-				}
-			} while ((SPI1_S & SPI_S_TXFULLF)); // Fifo  full
-			SPI1_DL = val;
-			_cWritesPending++;
-		}
-		else {
-			uint32_t sr;
-			do {
-				sr = _pKSPI->S;
-				if ((sr & SPI_S_SPRF)) {
-					uint8_t tmp __attribute__((unused)) = _pKSPI->DL;
+#ifdef USE_SPI1
+		do {
+			if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+				uint8_t tmp __attribute__((unused)) = SPI1_DL;
+				if (_cWritesPending)
 					_cWritesPending--;
-				}
-			} while (!(sr & SPI_S_SPTEF)); // room for byte to output.
-			_pKSPI->DL = val;
-			_cWritesPending++;
-	}
+			}
+		} while ((SPI1_S & SPI_S_TXFULLF)); // Fifo  full
+		SPI1_DL = val;
+		_cWritesPending++;
+#else
+		uint32_t sr;
+		do {
+			sr = SPI0_S;
+			if ((sr & SPI_S_SPRF)) {
+				uint8_t tmp __attribute__((unused)) = SPI0_DL;
+				_cWritesPending--;
+			}
+		} while (!(sr & SPI_S_SPTEF)); // room for byte to output.
+		SPI0_DL = val;
+		_cWritesPending++;
+#endif
 }
 
 	uint8_t transferSPIByte(uint8_t val) {
-		if (_fSPI1) {
-			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
-				if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
-					uint8_t tmp __attribute__((unused)) = SPI1_DL;
-					if (_cWritesPending)
-						_cWritesPending--;
-				}
-			}
-			SPI1_DL = val;	// now output the byte to the queue.
-			while ((SPI1_S & SPI_S_RFIFOEF));	// Wait until we get something.
-			_cWritesPending = 0;
-			return SPI1_DL;
-		}
-		else {
-			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
-				if (SPI0_S & SPI_S_SPRF) {	// If receive not empty read one... 
-					uint32_t tmp __attribute__((unused)) = SPI0_DL;
+#ifdef USE_SPI1
+		while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+			if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+				uint8_t tmp __attribute__((unused)) = SPI1_DL;
+				if (_cWritesPending)
 					_cWritesPending--;
-				}
 			}
-			SPI0_DL = val;	// now output the byte to the queue.
-			while (!(SPI0_S & SPI_S_SPRF));	// Wait until we get something.
-			_cWritesPending = 0;
-			return SPI0_DL;
 		}
+		SPI1_DL = val;	// now output the byte to the queue.
+		while ((SPI1_S & SPI_S_RFIFOEF));	// Wait until we get something.
+		_cWritesPending = 0;
+		return SPI1_DL;
+#else
+		while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+			if (SPI0_S & SPI_S_SPRF) {	// If receive not empty read one... 
+				uint32_t tmp __attribute__((unused)) = SPI0_DL;
+				_cWritesPending--;
+			}
+		}
+		SPI0_DL = val;	// now output the byte to the queue.
+		while (!(SPI0_S & SPI_S_SPRF));	// Wait until we get something.
+		_cWritesPending = 0;
+		return SPI0_DL;
+#endif
 	}
 
 	void waitTransmitComplete(void) {
-		if (_fSPI1) {
-			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
-				while (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
-					uint8_t tmp __attribute__((unused)) = SPI1_DL;
-					_cWritesPending--;
-				}
+#ifdef USE_SPI1
+		while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+			while (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+				uint8_t tmp __attribute__((unused)) = SPI1_DL;
+				_cWritesPending--;
 			}
 		}
-		else {
-			while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
-				if (SPI0_S & SPI_S_SPRF) {	// If receive not empty read one... 
-					uint32_t tmp __attribute__((unused)) = SPI0_DL;
-					_cWritesPending--;
-				}
+#else
+		while (_cWritesPending > 0) {		// Wait until all of our bytes have been transfered
+			if (SPI0_S & SPI_S_SPRF) {	// If receive not empty read one... 
+				uint32_t tmp __attribute__((unused)) = SPI0_DL;
+				_cWritesPending--;
 			}
 		}
+#endif
 		_cWritesPending = 0;
 	}
-    // For Teensy lets try using set and clear register.
+
+	// For Teensy lets try using set and clear register.
     void dcHigh()  __attribute__((always_inline)) {
         if (!fDCHigh) {
             waitTransmitComplete();
@@ -330,66 +390,61 @@ class ILI9341_TLC : public Print
     }
 
 	void writeSPIWord(uint16_t val) {
-		if (_fSPI1) {
-			do {
-				if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
-					uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
-					tmp = KINETISL_SPI1.DH;
-					if (_cWritesPending)
-						_cWritesPending--;
-				}
-			} while ((SPI1_S & SPI_S_TXFULLF)); // Fifo  full
-			*((uint16_t*)&KINETISL_SPI1.DL) = val;
-			_cWritesPending++;
-		}
-		else {
-			uint32_t sr;
-			do {
-				sr = _pKSPI->S;
-				if ((sr & SPI_S_SPRF)) {
-					uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
-					tmp = KINETISL_SPI1.DH;
+#ifdef USE_SPI1
+		do {
+			if (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+				uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
+				tmp = KINETISL_SPI1.DH;
+				if (_cWritesPending)
 					_cWritesPending--;
-				}
-			} while (!(sr & SPI_S_SPTEF)); // room for byte to output.
-			*((uint16_t*)&KINETISL_SPI0.DL) = val;
-			_cWritesPending++;
-		}
+			}
+		} while ((SPI1_S & SPI_S_TXFULLF)); // Fifo  full
+		*((uint16_t*)&KINETISL_SPI1.DL) = val;
+		_cWritesPending++;
+#else
+		do {
+			if ((SPI0_S & SPI_S_SPRF)) {
+				uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
+				tmp = KINETISL_SPI1.DH;
+				_cWritesPending--;
+			}
+		} while (!(SPI0_S & SPI_S_SPTEF)); // room for byte to output.
+		*((uint16_t*)&KINETISL_SPI0.DL) = val;
+		_cWritesPending++;
+#endif
 	}
 
 	void set16BitWrite() __attribute__((always_inline)) {
 		dcHigh();
 		csLow();
 		waitTransmitComplete();
-		_pKSPI->C2 = SPI_C2_SPIMODE;
-//		SPI1_C3 |= SPI_C3_FIFOMODE;
+		SPI1_C2 = SPI_C2_SPIMODE;
 	}
 
 	void waitTransmitComplete16(void) {
 		// Only do just before we reset back to 8 bit mode, so no need in reading out the stuff...
-		if (_fSPI1) {
-			while (_cWritesPending > 0) {
-				while (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
-					uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
-					tmp = KINETISL_SPI1.DH;
-					_cWritesPending--;
-				}
+#ifdef USE_SPI1
+		while (_cWritesPending > 0) {
+			while (!(SPI1_S & SPI_S_RFIFOEF)) {	// If receive not empty read one... 
+				uint8_t tmp __attribute__((unused)) = KINETISL_SPI1.DL;
+				tmp = KINETISL_SPI1.DH;
+				_cWritesPending--;
 			}
 		}
-		else {
-			while (_cWritesPending > 0) {
-				if ((SPI0_S & SPI_S_SPRF)) {	// If receive not empty read one... 
-					uint16_t tmp __attribute__((unused)) = *((uint16_t*)&KINETISL_SPI0.DL);
-					_cWritesPending--;
-				}
+#else
+		while (_cWritesPending > 0) {
+			if ((SPI0_S & SPI_S_SPRF)) {	// If receive not empty read one... 
+				uint16_t tmp __attribute__((unused)) = *((uint16_t*)&KINETISL_SPI0.DL);
+				_cWritesPending--;
 			}
 		}
+#endif
 		_cWritesPending = 0;	// make sure zero... 
 	}
+
 	void set8BitWrite() __attribute__((always_inline)) {
 		waitTransmitComplete16();
-		_pKSPI->C2 = 0;
-//		SPI1_C3 |= SPI_C3_FIFOMODE;
+		SPI1_C2 = 0;
 	}
 
 
