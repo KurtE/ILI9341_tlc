@@ -452,12 +452,6 @@ class ILI9341_TLC : public Print
 		writeSPIWord(d);
 	}
 
-	void writedata16_cont(uint16_t d) __attribute__((always_inline)) {
-        dcHigh();
-        csLow();
-        writeSPIByte(d>>8);
-        writeSPIByte(d & 0xff);
-	}
 	void writecommand_last(uint8_t c) __attribute__((always_inline)) {
         dcLow();
         csLow();
@@ -478,13 +472,6 @@ class ILI9341_TLC : public Print
         return r; 
     }
 
-	void writedata16_last(uint16_t d) __attribute__((always_inline)) {
-        dcHigh();
-        csLow();
-        writeSPIByte(d>>8);
-        writeSPIByte(d & 0xff);
-        csHigh();
-	}
 	void HLine(int16_t x, int16_t y, int16_t w, uint16_t color)
 	  __attribute__((always_inline)) {
 		setAddr(x, y, x+w-1, y);

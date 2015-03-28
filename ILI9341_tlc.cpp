@@ -55,7 +55,13 @@ void ILI9341_TLC::setAddrWindow(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t 
 void ILI9341_TLC::pushColor(uint16_t color)
 {
 	spiBegin();
-	writedata16_last(color);
+
+	dcHigh();
+	csLow();
+	set16BitWrite();
+	writedata16(color);
+	set8BitWrite();
+	csHigh();
 	spiEnd();
 }
 
@@ -64,9 +70,8 @@ void ILI9341_TLC::drawPixel(int16_t x, int16_t y, uint16_t color) {
 	if((x < 0) ||(x >= _width) || (y < 0) || (y >= _height)) return;
 
 	spiBegin();
-	setAddr(x, y, x, y);
-	writecommand_cont(ILI9341_RAMWR);
-	writedata16_last(color);
+	Pixel(x, y, color);
+	csHigh();
 	spiEnd();
 }
 
@@ -414,11 +419,13 @@ void ILI9341_TLC::drawCircle(int16_t x0, int16_t y0, int16_t r,
   int16_t ddF_y = -2 * r;
   int16_t x = 0;
   int16_t y = r;
-
-  drawPixel(x0  , y0+r, color);
-  drawPixel(x0  , y0-r, color);
-  drawPixel(x0+r, y0  , color);
-  drawPixel(x0-r, y0  , color);
+  spiBegin();
+  Pixel(x0, y0 + r, color);
+  Pixel(x0  , y0-r, color);
+  Pixel(x0+r, y0  , color);
+  Pixel(x0-r, y0  , color);
+  csHigh();
+  spiEnd();
 
   while (x<y) {
     if (f >= 0) {
@@ -430,14 +437,17 @@ void ILI9341_TLC::drawCircle(int16_t x0, int16_t y0, int16_t r,
     ddF_x += 2;
     f += ddF_x;
   
-    drawPixel(x0 + x, y0 + y, color);
-    drawPixel(x0 - x, y0 + y, color);
-    drawPixel(x0 + x, y0 - y, color);
-    drawPixel(x0 - x, y0 - y, color);
-    drawPixel(x0 + y, y0 + x, color);
-    drawPixel(x0 - y, y0 + x, color);
-    drawPixel(x0 + y, y0 - x, color);
-    drawPixel(x0 - y, y0 - x, color);
+	spiBegin();
+	Pixel(x0 + x, y0 + y, color);
+    Pixel(x0 - x, y0 + y, color);
+    Pixel(x0 + x, y0 - y, color);
+    Pixel(x0 - x, y0 - y, color);
+    Pixel(x0 + y, y0 + x, color);
+    Pixel(x0 - y, y0 + x, color);
+    Pixel(x0 + y, y0 - x, color);
+    Pixel(x0 - y, y0 - x, color);
+	csHigh();
+	spiEnd();
   }
 }
 
@@ -449,6 +459,7 @@ void ILI9341_TLC::drawCircleHelper( int16_t x0, int16_t y0,
   int16_t x     = 0;
   int16_t y     = r;
 
+  spiBegin();
   while (x<y) {
     if (f >= 0) {
       y--;
@@ -459,22 +470,24 @@ void ILI9341_TLC::drawCircleHelper( int16_t x0, int16_t y0,
     ddF_x += 2;
     f     += ddF_x;
     if (cornername & 0x4) {
-      drawPixel(x0 + x, y0 + y, color);
-      drawPixel(x0 + y, y0 + x, color);
+      Pixel(x0 + x, y0 + y, color);
+      Pixel(x0 + y, y0 + x, color);
     } 
     if (cornername & 0x2) {
-      drawPixel(x0 + x, y0 - y, color);
-      drawPixel(x0 + y, y0 - x, color);
+      Pixel(x0 + x, y0 - y, color);
+      Pixel(x0 + y, y0 - x, color);
     }
     if (cornername & 0x8) {
-      drawPixel(x0 - y, y0 + x, color);
-      drawPixel(x0 - x, y0 + y, color);
+      Pixel(x0 - y, y0 + x, color);
+      Pixel(x0 - x, y0 + y, color);
     }
     if (cornername & 0x1) {
-      drawPixel(x0 - y, y0 - x, color);
-      drawPixel(x0 - x, y0 - y, color);
+      Pixel(x0 - y, y0 - x, color);
+      Pixel(x0 - x, y0 - y, color);
     }
   }
+  csHigh();
+  spiEnd();
 }
 
 void ILI9341_TLC::fillCircle(int16_t x0, int16_t y0, int16_t r,
@@ -502,15 +515,17 @@ void ILI9341_TLC::fillCircleHelper(int16_t x0, int16_t y0, int16_t r,
     x++;
     ddF_x += 2;
     f     += ddF_x;
-
+	spiBegin();
     if (cornername & 0x1) {
-      drawFastVLine(x0+x, y0-y, 2*y+1+delta, color);
-      drawFastVLine(x0+y, y0-x, 2*x+1+delta, color);
+      VLine(x0+x, y0-y, 2*y+1+delta, color);
+      VLine(x0+y, y0-x, 2*x+1+delta, color);
     }
     if (cornername & 0x2) {
-      drawFastVLine(x0-x, y0-y, 2*y+1+delta, color);
-      drawFastVLine(x0-y, y0-x, 2*x+1+delta, color);
+      VLine(x0-x, y0-y, 2*y+1+delta, color);
+      VLine(x0-y, y0-x, 2*x+1+delta, color);
     }
+	csHigh();
+	spiEnd();
   }
 }
 
@@ -600,7 +615,7 @@ void ILI9341_TLC::drawLine(int16_t x0, int16_t y0,
 			HLine(xbegin, y0, x0 - xbegin, color);
 		}
 	}
-	writecommand_last(ILI9341_NOP);
+	csHigh();
 	spiEnd();
 }
 
@@ -613,7 +628,6 @@ void ILI9341_TLC::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
 	VLine(x, y, h, color);
 	VLine(x+w-1, y, h, color);
 	csHigh();
-//	writecommand_last(ILI9341_NOP);
 	spiEnd();
 }
 
@@ -621,10 +635,12 @@ void ILI9341_TLC::drawRect(int16_t x, int16_t y, int16_t w, int16_t h, uint16_t 
 void ILI9341_TLC::drawRoundRect(int16_t x, int16_t y, int16_t w,
   int16_t h, int16_t r, uint16_t color) {
   // smarter version
-  drawFastHLine(x+r  , y    , w-2*r, color); // Top
-  drawFastHLine(x+r  , y+h-1, w-2*r, color); // Bottom
-  drawFastVLine(x    , y+r  , h-2*r, color); // Left
-  drawFastVLine(x+w-1, y+r  , h-2*r, color); // Right
+  spiBegin();
+  HLine(x + r, y, w - 2 * r, color); // Top
+  HLine(x+r  , y+h-1, w-2*r, color); // Bottom
+  VLine(x    , y+r  , h-2*r, color); // Left
+  VLine(x+w-1, y+r  , h-2*r, color); // Right
+  spiEnd();
   // draw four corners
   drawCircleHelper(x+r    , y+r    , r, 1, color);
   drawCircleHelper(x+w-r-1, y+r    , r, 2, color);
@@ -698,7 +714,7 @@ void ILI9341_TLC::fillTriangle ( int16_t x0, int16_t y0,
   // (flat-topped triangle).
   if(y1 == y2) last = y1;   // Include y1 scanline
   else         last = y1-1; // Skip it
-
+  spiBegin();
   for(y=y0; y<=last; y++) {
     a   = x0 + sa / dy01;
     b   = x0 + sb / dy02;
@@ -709,7 +725,7 @@ void ILI9341_TLC::fillTriangle ( int16_t x0, int16_t y0,
     b = x0 + (x2 - x0) * (y - y0) / (y2 - y0);
     */
     if(a > b) swap(a,b);
-    drawFastHLine(a, y, b-a+1, color);
+    HLine(a, y, b-a+1, color);
   }
 
   // For lower part of triangle, find scanline crossings for segments
@@ -726,8 +742,10 @@ void ILI9341_TLC::fillTriangle ( int16_t x0, int16_t y0,
     b = x0 + (x2 - x0) * (y - y0) / (y2 - y0);
     */
     if(a > b) swap(a,b);
-    drawFastHLine(a, y, b-a+1, color);
+    HLine(a, y, b-a+1, color);
   }
+  csHigh();
+  spiEnd();
 }
 
 void ILI9341_TLC::drawBitmap(int16_t x, int16_t y,
@@ -778,6 +796,7 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 			uint8_t mask = 0x01;
 			int16_t xoff, yoff;
 			for (yoff=0; yoff < 8; yoff++) {
+				spiBegin();
 				uint8_t line = 0;
 				for (xoff=0; xoff < 5; xoff++) {
 					if (font[c * 5 + xoff] & mask) line |= 1;
@@ -787,21 +806,21 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 				xoff = 0;
 				while (line) {
 					if (line == 0x1F) {
-						drawFastHLine(x + xoff, y + yoff, 5, fgcolor);
+						HLine(x + xoff, y + yoff, 5, fgcolor);
 						break;
 					} else if (line == 0x1E) {
-						drawFastHLine(x + xoff, y + yoff, 4, fgcolor);
+						HLine(x + xoff, y + yoff, 4, fgcolor);
 						break;
 					} else if ((line & 0x1C) == 0x1C) {
-						drawFastHLine(x + xoff, y + yoff, 3, fgcolor);
+						HLine(x + xoff, y + yoff, 3, fgcolor);
 						line <<= 4;
 						xoff += 4;
 					} else if ((line & 0x18) == 0x18) {
-						drawFastHLine(x + xoff, y + yoff, 2, fgcolor);
+						HLine(x + xoff, y + yoff, 2, fgcolor);
 						line <<= 3;
 						xoff += 3;
 					} else if ((line & 0x10) == 0x10) {
-						drawPixel(x + xoff, y + yoff, fgcolor);
+						Pixel(x + xoff, y + yoff, fgcolor);
 						line <<= 2;
 						xoff += 2;
 					} else {
@@ -810,6 +829,8 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 					}
 				}
 				mask = mask << 1;
+				csHigh();
+				spiEnd();
 			}
 		} else {
 			uint8_t mask = 0x01;
@@ -859,6 +880,7 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 		spiBegin();
 		setAddr(x, y, x + 6 * size - 1, y + 8 * size - 1);
 		writecommand_cont(ILI9341_RAMWR);
+		set16BitWrite();	// this will setup for 16 bit writes...
 		uint8_t xr, yr;
 		uint8_t mask = 0x01;
 		uint16_t color;
@@ -871,16 +893,17 @@ void ILI9341_TLC::drawChar(int16_t x, int16_t y, unsigned char c,
 						color = bgcolor;
 					}
 					for (xr=0; xr < size; xr++) {
-						writedata16_cont(color);
+						writedata16(color);
 					}
 				}
 				for (xr=0; xr < size; xr++) {
-					writedata16_cont(bgcolor);
+					writedata16(bgcolor);
 				}
 			}
 			mask = mask << 1;
 		}
-		writecommand_last(ILI9341_NOP);
+		set8BitWrite();	// this will setup for 16 bit writes...
+		csHigh();
 		spiEnd();
 	}
 }
